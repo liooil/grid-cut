@@ -251,6 +251,9 @@ export function App() {
         <p className="text-muted-foreground text-sm">
           用统一大小的矩形框标出切片区域，支持自动排列和手动拖拽。
         </p>
+        <p className="mt-1 text-[10px] text-muted-foreground/50">
+          By DeepSeekV4 with Claude Code — ¥3.5
+        </p>
 
         {showHelp && (
           <div className="mt-4 rounded-lg border bg-muted/50 p-4 text-left text-sm text-muted-foreground">
