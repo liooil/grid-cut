@@ -122,13 +122,21 @@ export function App() {
   // ----- box management -----------------------------------------------------
 
   const addBox = useCallback(() => {
+    if (!image) return;
     const offset = boxes.length * 0.15;
     const x = clamp(0.05 + offset, 0, 0.75);
     const y = clamp(0.05 + offset, 0, 0.75);
     setBoxes((prev) => [...prev, { x, y }]);
     setSelectedIndex(boxes.length);
     setTiles(null);
-  }, [boxes.length]);
+  }, [boxes.length, image]);
+
+  const addBoxAt = useCallback((xFrac: number, yFrac: number) => {
+    if (!image) return;
+    setBoxes((prev) => [...prev, { x: xFrac, y: yFrac }]);
+    setSelectedIndex(boxes.length);
+    setTiles(null);
+  }, [boxes.length, image]);
 
   const removeBox = useCallback((index: number) => {
     setBoxes((prev) => prev.filter((_, i) => i !== index));
@@ -140,6 +148,12 @@ export function App() {
     setBoxes(next);
     setTiles(null);
   }, []);
+
+  const handleBoxResize = useCallback((wFrac: number, hFrac: number) => {
+    if (!image) return;
+    setBoxPxW(clamp(Math.round(wFrac * image.naturalWidth), 8, image.naturalWidth));
+    setBoxPxH(clamp(Math.round(hFrac * image.naturalHeight), 8, image.naturalHeight));
+  }, [image]);
 
   const handleSelect = useCallback((i: number | null) => {
     setSelectedIndex(i);
@@ -173,17 +187,15 @@ export function App() {
     if (!image || boxes.length === 0) return;
     const imgW = image.naturalWidth;
     const imgH = image.naturalHeight;
-    const bw = boxPxW;
-    const bh = boxPxH;
 
     const results: { blob: Blob; idx: number; w: number; h: number }[] = [];
     for (let i = 0; i < boxes.length; i++) {
       const b = boxes[i]!;
       const px = Math.round(b.x * imgW);
       const py = Math.round(b.y * imgH);
-      const tile: TileRect = { x: px, y: py, w: bw, h: bh };
+      const tile: TileRect = { x: px, y: py, w: boxPxW, h: boxPxH };
       const blob = await extractTile(image, tile);
-      if (blob) results.push({ blob, idx: i, w: bw, h: bh });
+      if (blob) results.push({ blob, idx: i, w: boxPxW, h: boxPxH });
     }
     setTiles(results);
   }, [image, boxes, boxPxW, boxPxH]);
@@ -235,7 +247,10 @@ export function App() {
               <li><strong className="text-foreground">框大小</strong> — 设置切片像素宽高（所有框统一尺寸）。</li>
               <li><strong className="text-foreground">重叠</strong> — 自动排列时相邻切片的重叠像素数。</li>
               <li><strong className="text-foreground">自动排列</strong> — 用当前框大小和重叠自动铺满图片。</li>
-              <li><strong className="text-foreground">点击框</strong> — 选中后显示删除按钮，可拖拽移动位置。</li>
+              <li><strong className="text-foreground">拖拽框</strong> — 移动位置；拖拽角上的白色方块可统一缩放所有框。</li>
+              <li><strong className="text-foreground">点击框</strong> — 选中后右上角显示 × 删除按钮。</li>
+              <li><strong className="text-foreground">双击框</strong> — 快速删除该框。</li>
+              <li><strong className="text-foreground">双击空白处</strong> — 在该位置添加一个新框。</li>
               <li><strong className="text-foreground">+ 添加框</strong> — 手动在图片上添加一个框。</li>
               <li><strong className="text-foreground">提取切片</strong> — 按所有框的位置裁切图片并导出。</li>
             </ul>
@@ -376,6 +391,8 @@ export function App() {
             onBoxesChange={handleBoxesChange}
             onSelect={handleSelect}
             onRemoveBox={removeBox}
+            onBoxResize={handleBoxResize}
+            onAddBox={addBoxAt}
           />
 
           {/* 框列表 */}
