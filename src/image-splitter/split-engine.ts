@@ -301,6 +301,38 @@ export function autoDetectFreeSplits(
   };
 }
 
+/**
+ * Compute the tile positions for a fixed-size grid layout covering the image.
+ *
+ * Evenly distributes tiles so the whole image is covered, with the
+ * specified overlap between adjacent tiles.
+ *
+ * Returns top-left positions in **pixel coordinates**.
+ */
+export function computeTiledLayout(
+  imgW: number,
+  imgH: number,
+  tileW: number,
+  tileH: number,
+  overlapX: number,
+  overlapY: number,
+): { x: number; y: number }[] {
+  const strideX = Math.max(1, tileW - overlapX);
+  const strideY = Math.max(1, tileH - overlapY);
+  const cols = Math.max(1, Math.ceil((imgW - tileW) / strideX) + 1);
+  const rows = Math.max(1, Math.ceil((imgH - tileH) / strideY) + 1);
+
+  const boxes: { x: number; y: number }[] = [];
+  for (let row = 0; row < rows; row++) {
+    const y = row === 0 ? 0 : Math.round(((imgH - tileH) * row) / (rows - 1));
+    for (let col = 0; col < cols; col++) {
+      const x = col === 0 ? 0 : Math.round(((imgW - tileW) * col) / (cols - 1));
+      boxes.push({ x, y });
+    }
+  }
+  return boxes;
+}
+
 export function autoDetectSplits(
   imageData: ImageData,
   horizontalSplits: number,

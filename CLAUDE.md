@@ -17,27 +17,24 @@ This is a **Bun + React 19** full-stack app using **Tailwind CSS v4** with **sha
 
 ### Image Splitter (`src/image-splitter/`)
 
-The split engine works in four steps:
+Uses a **fixed-size box** approach: the user picks a tile size (e.g. 512×512 px), then places boxes on the image to mark regions to extract. All boxes are the same size.
 
-1. **Downsample** — large images are scaled to ≤500px on the longest edge for performance.
-2. **Sobel edge detection** — computes gradient magnitude at each pixel (Rec. 601 luma), then sums per row and per column to build 1-D profiles.
-3. **Smooth & normalise** — moving-average smoothing, then scale to [0, 1].
-4. **Find splits** — for each split line, search a tolerance window (±25% of section size) around the evenly-spaced ideal position and pick the index with the **lowest** gradient (smoothest region).
+- `src/image-splitter/split-engine.ts` — Contains `computeTiledLayout()` which evenly distributes tiles across the image with configurable overlap (used for SD upscaling tiling). Also retains the Sobel-based edge detection pipeline (`autoDetectSplits`, `autoDetectFreeSplits`) for potential future use.
+- `src/image-splitter/SplitCanvas.tsx` — Interactive canvas that renders the image with coloured box overlays. Supports pointer-based click-to-select, drag-to-move, and a × remove button on the selected box. Uses ResizeObserver for responsive layout and `devicePixelRatio` for HiDPI rendering.
 
-Split positions are stored as **fractions [0, 1]** of image dimensions, making them resolution-independent. The canvas displays them by multiplying by the current display size.
+Box positions are stored as **fractions [0, 1]** of image dimensions, making them resolution-independent. The canvas displays them by multiplying by the current display size.
 
 ### Other key files
 
 - `src/index.ts` — Bun HTTP server with file routes and API endpoints. All unmatched routes serve `index.html`.
 - `src/index.html` — Shell HTML with a `<div id="root">` and module script pointing at `frontend.tsx`.
 - `src/frontend.tsx` — React entry point: calls `createRoot()` and renders `<App>`. Uses `import.meta.hot.data` for HMR.
-- `src/App.tsx` — Image Splitter tool (replaced the template). This is the main page: image upload, split controls, split-line canvas, and tile extraction.
-- `src/image-splitter/split-engine.ts` — Content-aware split detection. Uses Sobel edge detection to compute gradient profiles, then finds optimal split positions in uniform (low-gradient) regions. Supports configurable tolerance and downsampling for performance.
-- `src/image-splitter/SplitCanvas.tsx` — Interactive canvas overlay. Renders the image with split lines, drag handles, and position labels. Supports pointer-based drag to adjust lines. Uses ResizeObserver for responsive layout and `devicePixelRatio` for HiDPI rendering.
+- `src/App.tsx` — Main tool page: image upload, box size controls (pixels), overlap controls, auto-arrange grid layout, manual box placement, and tile extraction with preview grid.
 - `build.ts` — Production build script using `Bun.build()` with `bun-plugin-tailwind` for CSS bundling.
 - `styles/globals.css` — Tailwind v4 CSS with `@theme` for shadcn CSS variables, light/dark variant support.
 - `src/index.css` — App-specific styles imported by `App.tsx`.
 - `components.json` — shadcn/ui configuration (path aliases, style settings).
+- `src/sample.png` — Sample image auto-loaded on dev start.
 
 ### Path aliases
 

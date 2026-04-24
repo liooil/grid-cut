@@ -1,97 +1,61 @@
 import { useRef, useEffect, useCallback, useState } from "react";
 
+interface Box {
+  x: number;
+  y: number;
+}
+
 interface SplitCanvasProps {
   image: HTMLImageElement;
-  horizontalLines: number[];
-  /** Unified vertical splits (ignored when vLinesByRow is set). */
-  verticalLines: number[];
-  /** Per-row vertical splits — 1 array per horizontal band. */
-  vLinesByRow?: number[][];
-  onLinesChange: (h: number[], v: number[]) => void;
-  onVLinesByRowChange?: (v: number[][]) => void;
-  onRemoveLine: (type: "h" | "v", index: number) => void;
-  onRemoveLineByRow?: (row: number, index: number) => void;
+  /** All boxes — same w/h applied globally. */
+  boxes: Box[];
+  /** Box width as fraction [0, 1] of image width. */
+  boxW: number;
+  /** Box height as fraction [0, 1] of image height. */
+  boxH: number;
+  selectedIndex: number | null;
+  onBoxesChange: (boxes: Box[]) => void;
+  onSelect: (i: number | null) => void;
+  onRemoveBox: (i: number) => void;
 }
 
-const LINE_COLOR = "#ef4444";
-const LINE_WIDTH = 2;
-const HANDLE_RADIUS = 6;
-const HANDLE_HIT = 12;
+const SELECTED_COLOR = "#ef4444";
+const BOX_COLOR = "#3b82f6";
+const BOX_ALPHA = 0.12;
+const BORDER_WIDTH = 1.5;
+const SELECTED_BORDER = 2.5;
 const REMOVE_RADIUS = 7;
 const REMOVE_HIT = 11;
-const REMOVE_OFFSET = 18;
-const LABEL_BG = "rgba(239, 68, 68, 0.85)";
-const LABEL_COLOR = "#fff";
-
-// ---- drag/hit target types --------------------------------------------------
-
-type DragTarget =
-  | { type: "h"; index: number }
-  | { type: "v"; index: number }
-  | { type: "vr"; row: number; index: number }
-  | null;
-
-type HitTarget =
-  | { action: "remove"; type: "h"; index: number }
-  | { action: "remove"; type: "v"; index: number }
-  | { action: "remove"; type: "vr"; row: number; index: number }
-  | { action: "drag"; type: "h"; index: number }
-  | { action: "drag"; type: "v"; index: number }
-  | { action: "drag"; type: "vr"; row: number; index: number }
-  | null;
-
-// ---- helpers ----------------------------------------------------------------
-
-/** Build row-boundary y coords (CSS px) from image layout + hLines. */
-function rowBounds(
-  oy: number,
-  h: number,
-  hLines: number[],
-  count: number,
-): { y0: number; y1: number }[] {
-  const bounds: { y0: number; y1: number }[] = [];
-  for (let i = 0; i < count; i++) {
-    bounds.push({
-      y0: oy + (i === 0 ? 0 : hLines[i - 1]! * h),
-      y1: oy + (i >= hLines.length ? h : hLines[i]! * h),
-    });
-  }
-  return bounds;
-}
-
-// ---- component --------------------------------------------------------------
 
 export function SplitCanvas({
   image,
-  horizontalLines,
-  verticalLines,
-  vLinesByRow,
-  onLinesChange,
-  onVLinesByRowChange,
-  onRemoveLine,
-  onRemoveLineByRow,
+  boxes,
+  boxW,
+  boxH,
+  selectedIndex,
+  onBoxesChange,
+  onSelect,
+  onRemoveBox,
 }: SplitCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [drag, setDrag] = useState<DragTarget>(null);
-  const dragRef = useRef<DragTarget>(null);
+  const [drag, setDrag] = useState<{ index: number; ox: number; oy: number } | null>(null);
+  const dragRef = useRef(drag);
   dragRef.current = drag;
 
-  const rowCount = horizontalLines.length + 1;
-
-  function getLayout(containerW: number, containerH: number) {
-    const imgAspect = image.naturalWidth / image.naturalHeight;
-    const conAspect = containerW / containerH;
+  function getLayout(cw: number, ch: number) {
+    const ia = image.naturalWidth / image.naturalHeight;
+    const ca = cw / ch;
     let w: number;
     let h: number;
-    if (imgAspect > conAspect) {
-      w = containerW;
-      h = containerW / imgAspect;
+    if (ia > ca) {
+      w = cw;
+      h = cw / ia;
     } else {
-      h = containerH;
-      w = containerH * imgAspect;
+      h = ch;
+      w = ch * ia;
     }
-    return { ox: (containerW - w) / 2, oy: (containerH - h) / 2, w, h };
+    return { ox: (cw - w) / 2, oy: (ch - h) / 2, w, h };
   }
 
   // ----- draw ---------------------------------------------------------------
@@ -112,258 +76,154 @@ export function SplitCanvas({
     ctx.clearRect(0, 0, cw, ch);
     ctx.drawImage(image, ox, oy, w, h);
 
-    ctx.font = "11px monospace";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
+    ctx.font = "12px monospace";
+    ctx.textBaseline = "top";
 
-    // --- horizontal lines ---
-    for (const fy of horizontalLines) {
-      const y = oy + fy * h;
-      ctx.strokeStyle = LINE_COLOR;
-      ctx.lineWidth = LINE_WIDTH;
-      ctx.beginPath();
-      ctx.moveTo(ox, y);
-      ctx.lineTo(ox + w, y);
-      ctx.stroke();
+    for (let i = 0; i < boxes.length; i++) {
+      const { x: fx, y: fy } = boxes[i]!;
+      const bx = ox + fx * w;
+      const by = oy + fy * h;
+      const bw = boxW * w;
+      const bh = boxH * h;
+      const selected = i === selectedIndex;
+      const color = selected ? SELECTED_COLOR : BOX_COLOR;
 
-      const hx = ox + w / 2;
-      drawHandle(ctx, hx, y);
-      drawRemoveButton(ctx, hx + REMOVE_OFFSET, y);
+      // Fill
+      ctx.fillStyle = color + Math.round(BOX_ALPHA * 255).toString(16).padStart(2, "0");
+      ctx.fillRect(bx, by, bw, bh);
 
-      ctx.fillStyle = LABEL_BG;
-      const label = `${(fy * 100).toFixed(1)}%`;
-      const tw = ctx.measureText(label).width + 10;
-      const tx = ox + w - tw - 6;
-      const ty = y - LINE_WIDTH - 1;
-      roundRect(ctx, tx, ty - 8, tw, 17, 3);
-      ctx.fill();
-      ctx.fillStyle = LABEL_COLOR;
-      ctx.fillText(label, tx + tw / 2, ty + 1);
-    }
+      // Border
+      ctx.strokeStyle = color;
+      ctx.lineWidth = selected ? SELECTED_BORDER : BORDER_WIDTH;
+      ctx.strokeRect(bx, by, bw, bh);
 
-    // --- vertical lines ---
-    if (vLinesByRow) {
-      const bounds = rowBounds(oy, h, horizontalLines, rowCount);
-      for (let ri = 0; ri < bounds.length; ri++) {
-        const { y0, y1 } = bounds[ri]!;
-        const cy = (y0 + y1) / 2;
-        const rowVLines = vLinesByRow[ri] ?? [];
-        for (const fx of rowVLines) {
-          const x = ox + fx * w;
-          ctx.strokeStyle = LINE_COLOR;
-          ctx.lineWidth = LINE_WIDTH;
-          ctx.beginPath();
-          ctx.moveTo(x, y0);
-          ctx.lineTo(x, y1);
-          ctx.stroke();
+      // Label
+      ctx.fillStyle = color;
+      ctx.textAlign = "left";
+      ctx.fillText(`#${i + 1}`, bx + 4, by + 4);
 
-          drawHandle(ctx, x, cy);
-          drawRemoveButton(ctx, x + REMOVE_OFFSET, cy);
-        }
-      }
-    } else {
-      for (const fx of verticalLines) {
-        const x = ox + fx * w;
-        ctx.strokeStyle = LINE_COLOR;
-        ctx.lineWidth = LINE_WIDTH;
+      // Remove button (only on selected)
+      if (selected) {
+        const rx = bx + bw;
+        const ry = by;
+        ctx.fillStyle = SELECTED_COLOR;
         ctx.beginPath();
-        ctx.moveTo(x, oy);
-        ctx.lineTo(x, oy + h);
-        ctx.stroke();
-
-        drawHandle(ctx, x, oy + h / 2);
-        drawRemoveButton(ctx, x, oy + h / 2 + REMOVE_OFFSET);
-
-        ctx.fillStyle = LABEL_BG;
-        const label = `${(fx * 100).toFixed(1)}%`;
-        const tw = ctx.measureText(label).width + 10;
-        const tx = x - tw / 2;
-        const ty = oy + h + 6;
-        roundRect(ctx, tx, ty, tw, 17, 3);
+        ctx.arc(rx, ry, REMOVE_RADIUS, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = LABEL_COLOR;
-        ctx.fillText(label, tx + tw / 2, ty + 9);
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(rx - 3, ry - 3);
+        ctx.lineTo(rx + 3, ry + 3);
+        ctx.moveTo(rx + 3, ry - 3);
+        ctx.lineTo(rx - 3, ry + 3);
+        ctx.stroke();
       }
     }
-  }, [image, horizontalLines, verticalLines, vLinesByRow]);
-
-  function drawHandle(ctx: CanvasRenderingContext2D, x: number, y: number) {
-    ctx.fillStyle = LINE_COLOR;
-    ctx.beginPath();
-    ctx.arc(x, y, HANDLE_RADIUS, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.beginPath();
-    ctx.arc(x, y, HANDLE_RADIUS - 2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  function drawRemoveButton(ctx: CanvasRenderingContext2D, x: number, y: number) {
-    ctx.fillStyle = LINE_COLOR;
-    ctx.beginPath();
-    ctx.arc(x, y, REMOVE_RADIUS, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(x - 3, y - 3);
-    ctx.lineTo(x + 3, y + 3);
-    ctx.moveTo(x + 3, y - 3);
-    ctx.lineTo(x - 3, y + 3);
-    ctx.stroke();
-  }
-
-  function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x + w - r, y);
-    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-    ctx.lineTo(x + w, y + h - r);
-    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    ctx.lineTo(x + r, y + h);
-    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-    ctx.lineTo(x, y + r);
-    ctx.quadraticCurveTo(x, y, x + r, y);
-    ctx.closePath();
-  }
+  }, [image, boxes, boxW, boxH, selectedIndex]);
 
   // ----- hit testing --------------------------------------------------------
   const hitTest = useCallback(
-    (clientX: number, clientY: number): HitTarget => {
+    (clientX: number, clientY: number): { index: number; onRemove: boolean } | null => {
       const canvas = canvasRef.current;
       if (!canvas) return null;
       const rect = canvas.getBoundingClientRect();
       const mx = clientX - rect.left;
       const my = clientY - rect.top;
-      const { ox, oy, w: iw, h: ih } = getLayout(rect.width, rect.height);
+      const { ox, oy, w, h } = getLayout(rect.width, rect.height);
 
-      // ---- remove buttons ----
-
-      // Horizontal line remove buttons
-      for (let i = 0; i < horizontalLines.length; i++) {
-        const y = oy + horizontalLines[i]! * ih;
-        const bx = ox + iw / 2 + REMOVE_OFFSET;
-        if (Math.hypot(mx - bx, my - y) <= REMOVE_HIT) {
-          return { action: "remove", type: "h", index: i };
-        }
-      }
-
-      if (vLinesByRow) {
-        // Per-row vertical line remove buttons
-        const bounds = rowBounds(oy, ih, horizontalLines, rowCount);
-        for (let ri = 0; ri < bounds.length; ri++) {
-          const cy = (bounds[ri]!.y0 + bounds[ri]!.y1) / 2;
-          const rowVLines = vLinesByRow[ri] ?? [];
-          for (let vi = 0; vi < rowVLines.length; vi++) {
-            const x = ox + rowVLines[vi]! * iw;
-            if (Math.hypot(mx - (x + REMOVE_OFFSET), my - cy) <= REMOVE_HIT) {
-              return { action: "remove", type: "vr", row: ri, index: vi };
-            }
-          }
-        }
-      } else {
-        // Unified vertical line remove buttons
-        for (let i = 0; i < verticalLines.length; i++) {
-          const x = ox + verticalLines[i]! * iw;
-          if (Math.hypot(mx - x, my - (oy + ih / 2 + REMOVE_OFFSET)) <= REMOVE_HIT) {
-            return { action: "remove", type: "v", index: i };
+      // Check remove button first (higher priority)
+      if (selectedIndex != null) {
+        const s = boxes[selectedIndex];
+        if (s) {
+          const rx = ox + s.x * w + boxW * w;
+          const ry = oy + s.y * h;
+          if (Math.hypot(mx - rx, my - ry) <= REMOVE_HIT) {
+            return { index: selectedIndex, onRemove: true };
           }
         }
       }
 
-      // ---- drag handles ----
-
-      // Horizontal line handles
-      for (let i = 0; i < horizontalLines.length; i++) {
-        const y = oy + horizontalLines[i]! * ih;
-        if (Math.abs(my - y) <= HANDLE_HIT && mx >= ox && mx <= ox + iw) {
-          return { action: "drag", type: "h", index: i };
-        }
-      }
-
-      if (vLinesByRow) {
-        // Per-row vertical line handles
-        const bounds = rowBounds(oy, ih, horizontalLines, rowCount);
-        for (let ri = 0; ri < bounds.length; ri++) {
-          const rowVLines = vLinesByRow[ri] ?? [];
-          for (let vi = 0; vi < rowVLines.length; vi++) {
-            const x = ox + rowVLines[vi]! * iw;
-            if (Math.abs(mx - x) <= HANDLE_HIT && my >= bounds[ri]!.y0 && my <= bounds[ri]!.y1) {
-              return { action: "drag", type: "vr", row: ri, index: vi };
-            }
-          }
-        }
-      } else {
-        // Unified vertical line handles
-        for (let i = 0; i < verticalLines.length; i++) {
-          const x = ox + verticalLines[i]! * iw;
-          if (Math.abs(mx - x) <= HANDLE_HIT && my >= oy && my <= oy + ih) {
-            return { action: "drag", type: "v", index: i };
-          }
+      // Check boxes in reverse order (topmost drawn last)
+      for (let i = boxes.length - 1; i >= 0; i--) {
+        const { x: fx, y: fy } = boxes[i]!;
+        const bx = ox + fx * w;
+        const by = oy + fy * h;
+        const bw = boxW * w;
+        const bh = boxH * h;
+        if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh) {
+          return { index: i, onRemove: false };
         }
       }
 
       return null;
     },
-    [horizontalLines, verticalLines, vLinesByRow],
+    [boxes, boxW, boxH, selectedIndex],
   );
 
   // ----- pointer events -----------------------------------------------------
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
-      const target = hitTest(e.clientX, e.clientY);
-      if (!target) return;
-
-      if (target.action === "remove") {
-        if (target.type === "vr") {
-          onRemoveLineByRow?.(target.row, target.index);
-        } else {
-          onRemoveLine(target.type, target.index);
-        }
+      const hit = hitTest(e.clientX, e.clientY);
+      if (!hit) {
+        onSelect(null);
         return;
       }
 
-      // Start drag
-      if (target.type === "vr") {
-        setDrag({ type: "vr", row: target.row, index: target.index });
-      } else {
-        setDrag({ type: target.type, index: target.index });
+      onSelect(hit.index);
+
+      if (hit.onRemove) {
+        onRemoveBox(hit.index);
+        return;
       }
+
+      // Start drag, record offset from box corner
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const { ox, oy, w, h } = getLayout(rect.width, rect.height);
+      const b = boxes[hit.index]!;
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      setDrag({
+        index: hit.index,
+        ox: mx - (ox + b.x * w),
+        oy: my - (oy + b.y * h),
+      });
       (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
     },
-    [hitTest, onRemoveLine, onRemoveLineByRow],
+    [hitTest, onSelect, onRemoveBox, boxes],
   );
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
-      const t = dragRef.current;
-      if (!t) return;
+      const d = dragRef.current;
+      if (!d) return;
       const canvas = canvasRef.current;
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
-      const { ox, oy, w: iw, h: ih } = getLayout(rect.width, rect.height);
+      const { ox, oy, w, h } = getLayout(rect.width, rect.height);
 
-      if (t.type === "h") {
-        const lines = [...horizontalLines];
-        lines[t.index] = Math.max(0.01, Math.min(0.99, (e.clientY - rect.top - oy) / ih));
-        onLinesChange(lines, verticalLines);
-      } else if (t.type === "vr") {
-        if (!vLinesByRow || !onVLinesByRowChange) return;
-        const next = vLinesByRow.map((row) => [...row]);
-        next[t.row]![t.index] = Math.max(0.01, Math.min(0.99, (e.clientX - rect.left - ox) / iw));
-        onVLinesByRowChange(next);
-      } else {
-        const vlines = [...verticalLines];
-        vlines[t.index] = Math.max(0.01, Math.min(0.99, (e.clientX - rect.left - ox) / iw));
-        onLinesChange(horizontalLines, vlines);
-      }
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      let nx = (mx - d.ox - ox) / w;
+      let ny = (my - d.oy - oy) / h;
+
+      // Clamp so box stays within image
+      nx = Math.max(0, Math.min(1 - boxW, nx));
+      ny = Math.max(0, Math.min(1 - boxH, ny));
+
+      const next = boxes.map((b, i) =>
+        i === d.index ? { x: Math.round(nx * 1000) / 1000, y: Math.round(ny * 1000) / 1000 } : b,
+      );
+      onBoxesChange(next);
     },
-    [horizontalLines, verticalLines, vLinesByRow, onLinesChange, onVLinesByRowChange],
+    [boxes, boxW, boxH, onBoxesChange],
   );
 
   const handlePointerUp = useCallback(() => setDrag(null), []);
 
-  // ----- resize + re-draw ---------------------------------------------------
+  // ----- resize + redraw ----------------------------------------------------
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
